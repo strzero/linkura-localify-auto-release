@@ -5,66 +5,64 @@ on:
 
 jobs:
   build-and-patch:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ 拉取仓库
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 20
-
-      - name: Setup Python (for JSON parsing)
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.11
-
+      # 2️⃣ 安装 Java 22
       - name: Setup Java
         uses: actions/setup-java@v3
         with:
           distribution: temurin
           java-version: 22
 
-      - name: Install Puppeteer
-        run: npm install puppeteer
-
+      # 3️⃣ 创建工作目录
       - name: Create folders
         run: |
           mkdir app
           mkdir result
-        shell: powershell
 
-      - name: Download app.xapk via Puppeteer
-        run: node download_apkpure.js
+      # 4️⃣ 下载 app.xapk（使用 wget + UA + referer）
+      - name: Download app.xapk
+        run: |
+          echo "Downloading app.xapk from APKPure..."
+          wget -O app.xapk \
+            --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+            --referer="https://apkpure.com" \
+            "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
 
+      # 5️⃣ 下载最新 linkura-localify-arm64-v8a APK
       - name: Download latest linkura-localify arm64-v8a APK
         run: |
           echo "Fetching latest release from GitHub..."
-          $apiUrl = "https://api.github.com/repos/ChocoLZS/linkura-localify/releases/latest"
-          $release = Invoke-RestMethod -Uri $apiUrl
-          $asset = $release.assets | Where-Object { $_.name -match "linkura-localify-.*-debug-arm64-v8a\.apk" } | Select-Object -First 1
-          Write-Host "Downloading $($asset.name)..."
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $asset.name
-        shell: powershell
+          apiUrl="https://api.github.com/repos/ChocoLZS/linkura-localify/releases/latest"
+          assetUrl=$(curl -s $apiUrl \
+            | grep browser_download_url \
+            | grep "linkura-localify-.*-debug-arm64-v8a\.apk" \
+            | cut -d '"' -f 4)
+          echo "Downloading $assetUrl ..."
+          wget -O linkura-localify.apk "$assetUrl"
 
+      # 6️⃣ 解压 XAPK
       - name: Expand XAPK
-        run: Expand-Archive -Path .\app.xapk -DestinationPath .\app -Force
-        shell: powershell
+        run: unzip -o app.xapk -d app
 
+      # 7️⃣ 使用 APKEditor 处理
       - name: Run APKEditor
-        run: java -jar .\APKEditor.jar m -i .\app\
-        shell: powershell
+        run: java -jar APKEditor.jar m -i app/
 
+      # 8️⃣ 使用 LSPatch 打 patch
       - name: Run LSPatch
         run: |
-          $appMerged = Get-ChildItem -Path .\app -Filter "*_merged.apk" | Select-Object -First 1
-          Write-Host "Found merged APK: $($appMerged.FullName)"
-          $patchApk = Get-ChildItem -Filter "linkura-localify-*-debug-arm64-v8a.apk" | Select-Object -First 1
-          java -jar .\lspatch.jar $appMerged.FullName -m $patchApk.FullName -o .\result\
-        shell: powershell
+          appMerged=$(ls app/*_merged.apk | head -n 1)
+          echo "Found merged APK: $appMerged"
+          patchApk=$(ls linkura-localify.apk | head -n 1)
+          java -jar lspatch.jar "$appMerged" -m "$patchApk" -o result/
 
+      # 9️⃣ 上传 result 到 Release
       - name: Upload result to release
         uses: ncipollo/release-action@v1
         with:
