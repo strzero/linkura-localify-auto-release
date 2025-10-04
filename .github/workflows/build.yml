@@ -1,0 +1,77 @@
+name: Build Patched APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 22
+
+      - name: Install wget & unzip
+        run: sudo apt-get update && sudo apt-get install -y wget unzip
+
+      - name: Download target XAPK
+        run: |
+          echo "Downloading com.oddno.lovelive.xapk..."
+          wget -O app.xapk \
+            --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+            --referer="https://apkpure.com" \
+            "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
+          ls -lh app.xapk
+
+      - name: Download latest linkura-localify APK
+        run: |
+          echo "Fetching latest release info..."
+          LATEST_URL=$(curl -s https://api.github.com/repos/ChocoLZS/linkura-localify/releases/latest \
+            | grep "browser_download_url" \
+            | grep "debug-arm64-v8a.apk" \
+            | cut -d '"' -f 4)
+          echo "Downloading $LATEST_URL"
+          wget -O linkura-localify.apk "$LATEST_URL"
+          ls -lh linkura-localify.apk
+
+      - name: Extract XAPK
+        run: |
+          echo "Extracting app.xapk..."
+          mkdir -p app
+          unzip -o app.xapk -d app
+          echo "Extracted content:"
+          ls -R app
+
+      - name: Run APKEditor
+        run: |
+          echo "Merging APK with APKEditor..."
+          java -jar APKEditor.jar m -i app
+          echo "Contents after merge:"
+          ls -lh
+
+      - name: Run LSPatch
+        run: |
+          echo "Patching merged APK with LSPatch..."
+          java -jar lspatch.jar app_merged.apk -m linkura-localify.apk -o result
+          echo "Patched result:"
+          ls -lh result
+
+      - name: Upload artifact (for debugging)
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched-result
+          path: result/*
+
+      - name: Create Release and Upload
+        uses: softprops/action-gh-release@v2
+        with:
+          files: result/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
