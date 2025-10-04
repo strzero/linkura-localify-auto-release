@@ -1,14 +1,25 @@
 name: XAPK Patch Release
 
 on:
-  workflow_dispatch: # 手动触发
+  workflow_dispatch:  # 手动触发
 
 jobs:
   build-and-patch:
     runs-on: windows-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Setup Python (for JSON parsing)
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
 
       - name: Setup Java
         uses: actions/setup-java@v3
@@ -16,25 +27,21 @@ jobs:
           distribution: temurin
           java-version: 22
 
+      - name: Install Puppeteer
+        run: npm install puppeteer
+
       - name: Create folders
         run: |
           mkdir app
           mkdir result
         shell: powershell
 
-      - name: Download app.xapk from APKPure
-        run: |
-          Write-Host "Downloading app.xapk..."
-          $url = "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
-          $output = "app.xapk"
-          Invoke-WebRequest -Uri $url -OutFile $output -Headers @{
-            "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
-          }
-        shell: powershell
+      - name: Download app.xapk via Puppeteer
+        run: node download_apkpure.js
 
       - name: Download latest linkura-localify arm64-v8a APK
         run: |
-          Write-Host "Fetching latest release from GitHub..."
+          echo "Fetching latest release from GitHub..."
           $apiUrl = "https://api.github.com/repos/ChocoLZS/linkura-localify/releases/latest"
           $release = Invoke-RestMethod -Uri $apiUrl
           $asset = $release.assets | Where-Object { $_.name -match "linkura-localify-.*-debug-arm64-v8a\.apk" } | Select-Object -First 1
