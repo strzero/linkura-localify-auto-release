@@ -8,34 +8,38 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ 拉取仓库
+      # 1️⃣ Checkout
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2️⃣ 安装 Java 22
+      # 2️⃣ Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      # 3️⃣ Setup Java
       - name: Setup Java
         uses: actions/setup-java@v3
         with:
           distribution: temurin
           java-version: 22
 
-      # 3️⃣ 创建工作目录
+      # 4️⃣ Install Puppeteer
+      - name: Install Puppeteer
+        run: npm install puppeteer
+
+      # 5️⃣ Create working folders
       - name: Create folders
         run: |
-          mkdir app
-          mkdir result
+          mkdir -p app result
 
-      # 4️⃣ 下载 app.xapk（使用 wget + UA + referer）
+      # 6️⃣ Download app.xapk using Puppeteer
       - name: Download app.xapk
-        run: |
-          echo "Downloading app.xapk from APKPure..."
-          wget -O app.xapk \
-            --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-            --referer="https://apkpure.com" \
-            "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
+        run: node download_apkpure.js
 
-      # 5️⃣ 下载最新 linkura-localify-arm64-v8a APK
-      - name: Download latest linkura-localify arm64-v8a APK
+      # 7️⃣ Download latest linkura-localify arm64-v8a APK
+      - name: Download latest linkura-localify APK
         run: |
           echo "Fetching latest release from GitHub..."
           apiUrl="https://api.github.com/repos/ChocoLZS/linkura-localify/releases/latest"
@@ -46,15 +50,15 @@ jobs:
           echo "Downloading $assetUrl ..."
           wget -O linkura-localify.apk "$assetUrl"
 
-      # 6️⃣ 解压 XAPK
+      # 8️⃣ Expand XAPK
       - name: Expand XAPK
         run: unzip -o app.xapk -d app
 
-      # 7️⃣ 使用 APKEditor 处理
+      # 9️⃣ Run APKEditor
       - name: Run APKEditor
         run: java -jar APKEditor.jar m -i app/
 
-      # 8️⃣ 使用 LSPatch 打 patch
+      # 🔟 Run LSPatch
       - name: Run LSPatch
         run: |
           appMerged=$(ls app/*_merged.apk | head -n 1)
@@ -62,7 +66,7 @@ jobs:
           patchApk=$(ls linkura-localify.apk | head -n 1)
           java -jar lspatch.jar "$appMerged" -m "$patchApk" -o result/
 
-      # 9️⃣ 上传 result 到 Release
+      # 1️⃣1️⃣ Upload result to release
       - name: Upload result to release
         uses: ncipollo/release-action@v1
         with:
