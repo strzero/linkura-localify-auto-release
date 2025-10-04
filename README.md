@@ -1,0 +1,1 @@
+# linkura-localify-auto-release
