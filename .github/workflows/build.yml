@@ -1,77 +1,67 @@
-name: Build Patched APK
+name: XAPK Patch Release
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # 手动触发
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-
+  build-and-patch:
+    runs-on: windows-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - name: Setup Java
+        uses: actions/setup-java@v3
         with:
           distribution: temurin
           java-version: 22
 
-      - name: Install wget & unzip
-        run: sudo apt-get update && sudo apt-get install -y wget unzip
-
-      - name: Download target XAPK
+      - name: Create folders
         run: |
-          echo "Downloading com.oddno.lovelive.xapk..."
-          wget -O app.xapk \
-            --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-            --referer="https://apkpure.com" \
-            "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
-          ls -lh app.xapk
+          mkdir app
+          mkdir result
+        shell: powershell
 
-      - name: Download latest linkura-localify APK
+      - name: Download app.xapk from APKPure
         run: |
-          echo "Fetching latest release info..."
-          LATEST_URL=$(curl -s https://api.github.com/repos/ChocoLZS/linkura-localify/releases/latest \
-            | grep "browser_download_url" \
-            | grep "debug-arm64-v8a.apk" \
-            | cut -d '"' -f 4)
-          echo "Downloading $LATEST_URL"
-          wget -O linkura-localify.apk "$LATEST_URL"
-          ls -lh linkura-localify.apk
+          Write-Host "Downloading app.xapk..."
+          $url = "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
+          $output = "app.xapk"
+          Invoke-WebRequest -Uri $url -OutFile $output -Headers @{
+            "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+          }
+        shell: powershell
 
-      - name: Extract XAPK
+      - name: Download latest linkura-localify arm64-v8a APK
         run: |
-          echo "Extracting app.xapk..."
-          mkdir -p app
-          unzip -o app.xapk -d app
-          echo "Extracted content:"
-          ls -R app
+          Write-Host "Fetching latest release from GitHub..."
+          $apiUrl = "https://api.github.com/repos/ChocoLZS/linkura-localify/releases/latest"
+          $release = Invoke-RestMethod -Uri $apiUrl
+          $asset = $release.assets | Where-Object { $_.name -match "linkura-localify-.*-debug-arm64-v8a\.apk" } | Select-Object -First 1
+          Write-Host "Downloading $($asset.name)..."
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $asset.name
+        shell: powershell
+
+      - name: Expand XAPK
+        run: Expand-Archive -Path .\app.xapk -DestinationPath .\app -Force
+        shell: powershell
 
       - name: Run APKEditor
-        run: |
-          echo "Merging APK with APKEditor..."
-          java -jar APKEditor.jar m -i app
-          echo "Contents after merge:"
-          ls -lh
+        run: java -jar .\APKEditor.jar m -i .\app\
+        shell: powershell
 
       - name: Run LSPatch
         run: |
-          echo "Patching merged APK with LSPatch..."
-          java -jar lspatch.jar app_merged.apk -m linkura-localify.apk -o result
-          echo "Patched result:"
-          ls -lh result
+          $appMerged = Get-ChildItem -Path .\app -Filter "*_merged.apk" | Select-Object -First 1
+          Write-Host "Found merged APK: $($appMerged.FullName)"
+          $patchApk = Get-ChildItem -Filter "linkura-localify-*-debug-arm64-v8a.apk" | Select-Object -First 1
+          java -jar .\lspatch.jar $appMerged.FullName -m $patchApk.FullName -o .\result\
+        shell: powershell
 
-      - name: Upload artifact (for debugging)
-        uses: actions/upload-artifact@v4
+      - name: Upload result to release
+        uses: ncipollo/release-action@v1
         with:
-          name: patched-result
-          path: result/*
-
-      - name: Create Release and Upload
-        uses: softprops/action-gh-release@v2
-        with:
+          tag: "patch-result-${{ github.run_number }}"
+          name: "Patch Result ${{ github.run_number }}"
           files: result/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+          overwrite: true
