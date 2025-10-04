@@ -1,0 +1,141 @@
+name: Linkura-localify Patch Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      linkura_version:
+        description: 'Linkura version (optional)'
+        required: false
+        default: '手动'
+      linkura_localify_version:
+        description: 'Linkura-localify version (optional)'
+        required: false
+        default: '手动'
+  repository_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: 22
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssh-client jq unzip wget
+
+      - name: Determine versions
+        run: |
+          LINKURA_VERSION="${{ github.event.client_payload.linkura_version || github.event.inputs.linkura_version }}"
+          LINKURA_LOCALIFY_VERSION="${{ github.event.client_payload.linkura_localify_version || github.event.inputs.linkura_localify_version }}"
+          DATE=$(date '+%Y-%m-%d %H:%M:%S')
+          RELEASE_BODY="Linkura version: ${LINKURA_VERSION}\nLinkura-localify version: ${LINKURA_LOCALIFY_VERSION}\nBuild date: ${DATE}"
+          echo "LINKURA_VERSION=$LINKURA_VERSION" >> $GITHUB_ENV
+          echo "LINKURA_LOCALIFY_VERSION=$LINKURA_LOCALIFY_VERSION" >> $GITHUB_ENV
+          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
+          echo -e "$RELEASE_BODY" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          echo "RELEASE_TITLE=$LINKURA_VERSION-$LINKURA_LOCALIFY_VERSION" >> $GITHUB_ENV
+          echo "Using Linkura version: $LINKURA_VERSION"
+          echo "Using Linkura-localify version: $LINKURA_LOCALIFY_VERSION"
+
+      - name: Write SSH Key
+        run: |
+          echo "${{ secrets.SERVER_SSH_KEY }}" > /tmp/id_rsa
+          chmod 600 /tmp/id_rsa
+
+      # - name: Remote wget XAPK to server
+      #   run: |
+      #     ssh -o StrictHostKeyChecking=no -i /tmp/id_rsa -p ${{ secrets.SERVER_PORT }} \
+      #       ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
+      #       set -eux
+      #       mkdir -p /opt/linkura-localify-auto-release-web/data
+      #       cd /opt/linkura-localify-auto-release-web/data
+      #       wget -O latest.apk \
+      #         --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+      #         "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
+      #       ls -lh latest.apk
+      #     EOF
+
+      - name: Copy XAPK from server
+        run: |
+          scp -o StrictHostKeyChecking=no -i /tmp/id_rsa -P ${{ secrets.SERVER_PORT }} \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/linkura-localify-auto-release-web/data/latest.apk \
+            ./app.xapk
+          ls -lh app.xapk
+
+      - name: Download linkura-localify apk
+        run: |
+          url=$(curl -s https://api.github.com/repos/ChocoLZS/linkura-localify/releases/latest \
+            | jq -r '.assets[] | select(.name | test("linkura-localify-.*-debug-arm64-v8a\\.apk")) | .browser_download_url' \
+            | head -n1)
+          wget -O linkura-localify.apk "$url"
+          ls -lh linkura-localify.apk
+
+      - name: Expand XAPK
+        run: unzip -o app.xapk -d app
+
+      - name: Run APKEditor
+        run: java -jar APKEditor.jar m -i app/
+
+      - name: Run LSPatch
+        run: |
+          MERGED_APK=$(find . -maxdepth 1 -name "*_merged.apk" | head -n1)
+          if [ -z "$MERGED_APK" ]; then
+            echo "❌ 未找到 _merged.apk，检查 APKEditor 输出"
+            exit 1
+          fi
+          echo "Found merged apk: $MERGED_APK"
+          java -jar lspatch.jar "$MERGED_APK" -m linkura-localify.apk -o result
+          LSPATCHED_APK=$(find result -type f -name '*.apk' | head -n1)
+          if [ -z "$LSPATCHED_APK" ]; then
+            echo "❌ 未找到 lspatched apk"
+            exit 1
+          fi
+          echo "LSPATCHED_APK=$LSPATCHED_APK" >> $GITHUB_ENV
+
+      - name: Rename files for release
+        run: |
+          INITIAL_XAPK="linkura_${LINKURA_VERSION}.xapk"
+          LSPATCHED_APK_NAME="linkura_merged_lspatched_${LINKURA_VERSION}.apk"
+          cp app.xapk "./$INITIAL_XAPK"
+          cp "$LSPATCHED_APK" "./$LSPATCHED_APK_NAME"
+          echo "RELEASE_XAPK=./$INITIAL_XAPK" >> $GITHUB_ENV
+          echo "RELEASE_LSPATCHED=./$LSPATCHED_APK_NAME" >> $GITHUB_ENV
+          ls -lh ./*.apk ./*.xapk
+
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          if git ls-remote --tags origin | grep -q "refs/tags/${{ env.RELEASE_TITLE }}$"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Tag ${{ env.RELEASE_TITLE }} already exists, skipping release"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Tag ${{ env.RELEASE_TITLE }} does not exist, proceeding with release"
+          fi
+
+      - name: Upload Release
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TITLE }}
+          name: ${{ env.RELEASE_TITLE }}
+          body: ${{ env.RELEASE_BODY }}
+          artifacts: ${{ env.RELEASE_XAPK }},${{ env.RELEASE_LSPATCHED }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip Release (tag exists)
+        if: steps.check_tag.outputs.exists == 'true'
+        run: |
+          echo "✅ Release skipped because tag ${{ env.RELEASE_TITLE }} already exists"
+          echo "This is expected behavior to avoid duplicate releases"
