@@ -1,31 +1,22 @@
-const fs = require('fs');
 const puppeteer = require('puppeteer');
+const fs = require('fs');
 
 (async () => {
-  try {
-    const url = 'https://apkpure.com/cn/lovelive/com.oddno.lovelive/download?from=details';
-    const browser = await puppeteer.launch({ headless: true });
-    const page = await browser.newPage();
+  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+  const page = await browser.newPage();
 
-    // 模拟普通浏览器
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36');
+  // 模拟普通浏览器
+  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
 
-    console.log("Opening APKPure page...");
-    await page.goto(url, { waitUntil: 'networkidle2' });
+  // 直接访问 /b/XAPK/... 链接
+  const response = await page.goto('https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest', {
+    waitUntil: 'networkidle2'
+  });
 
-    // 等待下载按钮出现
-    await page.waitForSelector('a.da');
-    const downloadUrl = await page.$eval('a.da', el => el.href);
-    console.log('Final download URL:', downloadUrl);
+  // Puppeteer 会自动跟随 302 重定向到真实 XAPK
+  const buffer = await response.buffer();
+  fs.writeFileSync('app.xapk', buffer);
 
-    // 下载 XAPK
-    const viewSource = await page.goto(downloadUrl);
-    fs.writeFileSync('app.xapk', await viewSource.buffer());
-    console.log('Downloaded app.xapk successfully!');
-
-    await browser.close();
-  } catch (err) {
-    console.error('Error downloading app.xapk:', err);
-    process.exit(1);
-  }
+  console.log('Downloaded XAPK without clicking!');
+  await browser.close();
 })();
