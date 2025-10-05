@@ -61,7 +61,6 @@ jobs:
             # do NOT delete the file; keep it for subsequent runs (overwrite next time)
             SSH_EXIT=0
             exit $SSH_EXIT
-SSH_EOF
       - name: Fetch latest.apk from server (scp)
         run: |
           set -eux
