@@ -44,7 +44,7 @@ jobs:
           echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
           echo -e "$RELEASE_BODY" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
-          echo "RELEASE_TITLE=$LINKURA_VERSION" >> $GITHUB_ENV
+          echo "RELEASE_TITLE=$LINKURA_VERSION-$LINKURA_LOCALIFY_VERSION" >> $GITHUB_ENV
           echo "Using Linkura version: $LINKURA_VERSION"
           echo "Using Linkura-localify version: $LINKURA_LOCALIFY_VERSION"
 
