@@ -64,9 +64,15 @@ jobs:
 
       - name: Run LSPatch
         run: |
-          apk=$(find app -name "*_merged.apk" | head -n1)
+          apk=$(find . -maxdepth 1 -name "*_merged.apk" | head -n1)
+          if [ -z "$apk" ]; then
+            echo "❌ 未找到 _merged.apk，检查 APKEditor 输出"
+            exit 1
+          fi
+          echo "Found merged apk: $apk"
           java -jar lspatch.jar "$apk" -m linkura-localify.apk -o result
           ls -lh result
+
 
       - name: Upload Release
         uses: ncipollo/release-action@v1
