@@ -1,0 +1,159 @@
+name: XAPK Patch Release
+
+on:
+  workflow_dispatch:  # 手动触发
+
+jobs:
+  download-patch-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Java 22 (for APKEditor / lspatch)
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: 22
+
+      - name: Install runner tools (ssh/scp/jq/unzip/wget)
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y openssh-client jq unzip wget ca-certificates
+
+      - name: Prepare workspace folders
+        run: |
+          set -eux
+          mkdir -p app result
+
+      - name: Write SSH private key
+        run: |
+          set -eux
+          echo "Writing SSH key to /tmp/id_rsa"
+          printf '%s' "${{ secrets.SERVER_SSH_KEY }}" > /tmp/id_rsa
+          chmod 600 /tmp/id_rsa
+          ls -l /tmp/id_rsa
+
+      - name: Remote: download XAPK to server (/opt/.../latest.apk)
+        id: remote_download
+        run: |
+          set -eux
+          echo "SSH -> ${SERVER_USER}@${SERVER_HOST}:${SERVER_PORT} - starting remote wget"
+          # run remote wget and keep file at /opt/linkura-localify-auto-release-web/data/latest.apk
+          ssh -o StrictHostKeyChecking=no -i /tmp/id_rsa -p "${{ secrets.SERVER_PORT }}" "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" <<'SSH_EOF'
+            set -eux
+            TARGET_DIR="/opt/linkura-localify-auto-release-web/data"
+            mkdir -p "$TARGET_DIR"
+            cd "$TARGET_DIR"
+            echo "cwd: $(pwd); uid=$(id -u):$(id -g)"
+            echo "starting wget at $(date)"
+            # download and overwrite latest.apk (keep on server)
+            wget -c -O latest.apk \
+              --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+              --referer="https://apkpure.com" \
+              "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
+            echo "finished wget at $(date)"
+            ls -lh latest.apk || true
+            md5sum latest.apk || true
+            # do NOT delete the file; keep it for subsequent runs (overwrite next time)
+            SSH_EXIT=0
+            exit $SSH_EXIT
+SSH_EOF
+      - name: Fetch latest.apk from server (scp)
+        run: |
+          set -eux
+          echo "Copying /opt/linkura-localify-auto-release-web/data/latest.apk from server to runner ./app.xapk"
+          scp -o StrictHostKeyChecking=no -i /tmp/id_rsa -P "${{ secrets.SERVER_PORT }}" "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/linkura-localify-auto-release-web/data/latest.apk" ./app.xapk
+          echo "Local file info:"
+          ls -lh app.xapk || true
+          file app.xapk || true
+          echo "Head of file (first 512 bytes base64):"
+          head -c 512 app.xapk | base64 | sed -n '1,5p' || true
+
+      - name: Download latest linkura-localify arm64-v8a APK (from GitHub Releases)
+        run: |
+          set -eux
+          API="https://api.github.com/repos/ChocoLZS/linkura-localify/releases/latest"
+          echo "Querying $API"
+          asset_url=$(curl -s "$API" | jq -r '.assets[] | select(.name | test("linkura-localify-.*-debug-arm64-v8a\\.apk")) | .browser_download_url' | head -n1)
+          if [ -z "$asset_url" ]; then
+            echo "ERROR: couldn't find linkura-localify-*-debug-arm64-v8a.apk in latest release"
+            echo "Releases JSON:"
+            curl -s "$API" | sed -n '1,200p'
+            exit 1
+          fi
+          echo "Found asset: $asset_url"
+          wget -O linkura-localify.apk "$asset_url"
+          ls -lh linkura-localify.apk
+          md5sum linkura-localify.apk || true
+
+      - name: Expand XAPK (unzip)
+        run: |
+          set -eux
+          echo "Attempting to unzip app.xapk -> ./app"
+          unzip -o app.xapk -d app || { echo "unzip failed; showing file info"; file app.xapk; exit 1; }
+          echo "Listing app/ contents:"
+          ls -la app | sed -n '1,200p'
+
+      - name: Run APKEditor (expects APKEditor.jar in repo root)
+        run: |
+          set -eux
+          if [ ! -f APKEditor.jar ]; then
+            echo "ERROR: APKEditor.jar not found in repository root. Aborting."
+            ls -la
+            exit 1
+          fi
+          echo "Running: java -jar APKEditor.jar m -i app/"
+          java -jar APKEditor.jar m -i app/
+          echo "After APKEditor, list app/:"
+          ls -la app | sed -n '1,200p'
+
+      - name: Run LSPatch (expects lspatch.jar in repo root)
+        run: |
+          set -eux
+          if [ ! -f lspatch.jar ]; then
+            echo "ERROR: lspatch.jar not found in repository root. Aborting."
+            ls -la
+            exit 1
+          fi
+          # find merged apk
+          appMerged=$(find app -type f -name "*_merged.apk" -print -quit || true)
+          if [ -z "$appMerged" ]; then
+            echo "No *_merged.apk found; picking first .apk under app/ as fallback"
+            appMerged=$(find app -type f -name "*.apk" -print -quit || true)
+          fi
+          if [ -z "$appMerged" ]; then
+            echo "ERROR: no apk found in app/ to patch. Listing app/:"
+            ls -la app
+            exit 1
+          fi
+          echo "Using merged APK: $appMerged"
+          echo "Running: java -jar lspatch.jar \"$appMerged\" -m linkura-localify.apk -o result/"
+          java -jar lspatch.jar "$appMerged" -m linkura-localify.apk -o result/
+          echo "LSPatch finished. result/:"
+          ls -la result || true
+          echo "Result md5sums:"
+          ls -1 result/* || true
+          for f in result/*; do md5sum "$f" || true; done
+
+      - name: Publish result to GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: "patch-result-${{ github.run_number }}"
+          name: "Patch Result ${{ github.run_number }}"
+          files: result/*
+          overwrite: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Final debug (list workspace)
+        run: |
+          set -eux
+          echo "Workspace listing:"
+          ls -la
+          echo "app/:"
+          ls -la app || true
+          echo "result/:"
+          ls -la result || true
