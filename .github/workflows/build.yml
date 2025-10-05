@@ -53,18 +53,18 @@ jobs:
           echo "${{ secrets.SERVER_SSH_KEY }}" > /tmp/id_rsa
           chmod 600 /tmp/id_rsa
 
-      - name: Remote wget XAPK to server
-        run: |
-          ssh -o StrictHostKeyChecking=no -i /tmp/id_rsa -p ${{ secrets.SERVER_PORT }} \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
-            set -eux
-            mkdir -p /opt/linkura-localify-auto-release-web/data
-            cd /opt/linkura-localify-auto-release-web/data
-            wget -O latest.apk \
-              --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-              "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
-            ls -lh latest.apk
-          EOF
+      # - name: Remote wget XAPK to server
+      #   run: |
+      #     ssh -o StrictHostKeyChecking=no -i /tmp/id_rsa -p ${{ secrets.SERVER_PORT }} \
+      #       ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
+      #       set -eux
+      #       mkdir -p /opt/linkura-localify-auto-release-web/data
+      #       cd /opt/linkura-localify-auto-release-web/data
+      #       wget -O latest.apk \
+      #         --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+      #         "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
+      #       ls -lh latest.apk
+      #     EOF
 
       - name: Copy XAPK from server
         run: |
