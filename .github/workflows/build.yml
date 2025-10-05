@@ -2,15 +2,20 @@ name: XAPK Patch Release
 
 on:
   workflow_dispatch:
-  repository_dispatch: # 用于 API 调用
-    types: [trigger-patch]
+    inputs:
+      linkura_version:
+        description: 'Linkura version (optional)'
+        required: false
+        default: '手动'
+      linkura_localify_version:
+        description: 'Linkura-localify version (optional)'
+        required: false
+        default: ''
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    env:
-      RESULT_DIR: result
 
     steps:
       - name: Checkout
@@ -25,115 +30,90 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y openssh-client jq unzip wget curl
+          sudo apt-get install -y openssh-client jq unzip wget
 
-      - name: Prepare environment variables
+      - name: Write SSH Key
         run: |
-          mkdir -p $RESULT_DIR
-        shell: bash
+          echo "${{ secrets.SERVER_SSH_KEY }}" > /tmp/id_rsa
+          chmod 600 /tmp/id_rsa
 
-      # ---------------------------
-      # 远程 wget XAPK 到服务器
-      # ---------------------------
-      # - name: Write SSH Key
-      #   run: |
-      #     echo "${{ secrets.SERVER_SSH_KEY }}" > /tmp/id_rsa
-      #     chmod 600 /tmp/id_rsa
-
-      # - name: Remote wget XAPK to server
-      #   run: |
-      #     ssh -o StrictHostKeyChecking=no -i /tmp/id_rsa -p ${{ secrets.SERVER_PORT }} \
-      #       ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
-      #       set -eux
-      #       mkdir -p /opt/linkura-localify-auto-release-web/data
-      #       cd /opt/linkura-localify-auto-release-web/data
-      #       wget -O latest.apk \
-      #         --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-      #         "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
-      #     EOF
+      - name: Remote wget XAPK to server
+        run: |
+          ssh -o StrictHostKeyChecking=no -i /tmp/id_rsa -p ${{ secrets.SERVER_PORT }} \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
+            set -eux
+            mkdir -p /opt/linkura-localify-auto-release-web/data
+            cd /opt/linkura-localify-auto-release-web/data
+            wget -O latest.apk \
+              --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+              "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
+            ls -lh latest.apk
+          EOF
 
       - name: Copy XAPK from server
         run: |
           scp -o StrictHostKeyChecking=no -i /tmp/id_rsa -P ${{ secrets.SERVER_PORT }} \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/linkura-localify-auto-release-web/data/latest.apk \
             ./app.xapk
+          ls -lh app.xapk
 
-      # ---------------------------
-      # 下载 linkura-localify 最新版本
-      # ---------------------------
       - name: Download linkura-localify apk
         run: |
-          if [[ -n "${{ github.event.client_payload.linkura_version }}" ]]; then
-            LINKURA_VERSION="${{ github.event.client_payload.linkura_version }}"
-            LOCALIFY_VERSION="${{ github.event.client_payload.linkura_localify_version }}"
-          else
-            LINKURA_VERSION="手动"
-            LOCALIFY_VERSION="手动"
-          fi
-          echo "LINKURA_VERSION=$LINKURA_VERSION" >> $GITHUB_ENV
-          echo "LOCALIFY_VERSION=$LOCALIFY_VERSION" >> $GITHUB_ENV
-
-          # 获取最新 release 中 arm64-v8a debug apk
-          URL=$(curl -s https://api.github.com/repos/ChocoLZS/linkura-localify/releases/latest \
+          url=$(curl -s https://api.github.com/repos/ChocoLZS/linkura-localify/releases/latest \
             | jq -r '.assets[] | select(.name | test("linkura-localify-.*-debug-arm64-v8a\\.apk")) | .browser_download_url' \
             | head -n1)
-          wget -O linkura-localify.apk "$URL"
+          wget -O linkura-localify.apk "$url"
           ls -lh linkura-localify.apk
 
-      # ---------------------------
-      # Expand XAPK
-      # ---------------------------
       - name: Expand XAPK
         run: unzip -o app.xapk -d app
 
-      # ---------------------------
-      # Run APKEditor
-      # ---------------------------
       - name: Run APKEditor
         run: java -jar APKEditor.jar m -i app/
 
-      # ---------------------------
-      # Copy merged APK & patch
-      # ---------------------------
       - name: Run LSPatch
         run: |
           MERGED_APK=$(find . -maxdepth 1 -name "*_merged.apk" | head -n1)
           if [ -z "$MERGED_APK" ]; then
-            echo "❌ 未找到 _merged.apk"
+            echo "❌ 未找到 _merged.apk，检查 APKEditor 输出"
             exit 1
           fi
-          echo "MERGED_APK=$MERGED_APK"
-
-          mkdir -p $RESULT_DIR
-
-          MERGED_NAME="linkura_merged_${LINKURA_VERSION}.apk"
-          PATCHED_NAME="linkura_merged_lspatched_${LINKURA_VERSION}.apk"
-
-          cp "$MERGED_APK" "$RESULT_DIR/$MERGED_NAME"
-
-          java -jar lspatch.jar "$MERGED_APK" -m linkura-localify.apk -o "$RESULT_DIR"
-          # 默认输出文件名 *_lspatched.apk，重命名
-          PATCHED_APK=$(find "$RESULT_DIR" -maxdepth 1 -name "*_lspatched.apk" | head -n1)
-          if [ -z "$PATCHED_APK" ]; then
-            echo "❌ 未生成 patched APK"
+          echo "Found merged apk: $MERGED_APK"
+          java -jar lspatch.jar "$MERGED_APK" -m linkura-localify.apk -o result
+          LSPATCHED_APK=$(find result -type f -name '*.apk' | head -n1)
+          if [ -z "$LSPATCHED_APK" ]; then
+            echo "❌ 未找到 lspatched apk"
             exit 1
           fi
-          mv "$PATCHED_APK" "$RESULT_DIR/$PATCHED_NAME"
-          ls -lh $RESULT_DIR
+          echo "MERGED_APK=$MERGED_APK" >> $GITHUB_ENV
+          echo "LSPATCHED_APK=$LSPATCHED_APK" >> $GITHUB_ENV
 
-      # ---------------------------
-      # Upload release
-      # ---------------------------
+      - name: Prepare Release Info
+        run: |
+          LINKURA_VERSION="${{ github.event.inputs.linkura_version }}"
+          LINKURA_LOCALIFY_VERSION="${{ github.event.inputs.linkura_localify_version }}"
+          DATE=$(date '+%Y-%m-%d %H:%M:%S')
+          RELEASE_BODY="Linkura version: ${LINKURA_VERSION}\nLinkura-localify version: ${LINKURA_LOCALIFY_VERSION}\nBuild date: ${DATE}"
+          echo "RELEASE_TITLE=${LINKURA_VERSION}" >> $GITHUB_ENV
+          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
+          echo -e "$RELEASE_BODY" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Rename APKs for Release
+        run: |
+          MERGED_NAME="linkura_merged_${{ github.event.inputs.linkura_version }}.apk"
+          LSPATCHED_NAME="linkura_merged_lspatched_${{ github.event.inputs.linkura_version }}.apk"
+          cp "$MERGED_APK" "./$MERGED_NAME"
+          cp "$LSPATCHED_APK" "./$LSPATCHED_NAME"
+          echo "RELEASE_MERGED=./$MERGED_NAME" >> $GITHUB_ENV
+          echo "RELEASE_LSPATCHED=./$LSPATCHED_NAME" >> $GITHUB_ENV
+          ls -lh ./*.apk
+
       - name: Upload Release
         uses: ncipollo/release-action@v1
         with:
-          tag: ${{ env.LINKURA_VERSION }}
-          name: "Linkura Patch ${{ env.LINKURA_VERSION }}"
-          body: |
-            Linkura Version: ${{ env.LINKURA_VERSION }}
-            Linkura-Localify Version: ${{ env.LOCALIFY_VERSION }}
-            Date: $(date -u)
-          owner: ${{ github.repository_owner }}
-          repo: ${{ github.repository }}
+          tag: patch-${{ github.run_number }}
+          name: ${{ env.RELEASE_TITLE }}
+          body: ${{ env.RELEASE_BODY }}
+          artifacts: ${{ env.RELEASE_MERGED }},${{ env.RELEASE_LSPATCHED }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          artifacts: result/*
