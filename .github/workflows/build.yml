@@ -2,6 +2,15 @@ name: XAPK Patch Release
 
 on:
   workflow_dispatch:
+    inputs:
+      linkura_version:
+        description: 'Linkura version (optional)'
+        required: false
+        default: '手动'
+      linkura_localify_version:
+        description: 'Linkura-localify version (optional)'
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -72,12 +81,25 @@ jobs:
           echo "Found merged apk: $apk"
           java -jar lspatch.jar "$apk" -m linkura-localify.apk -o result
           ls -lh result
+          echo "RESULT_APK=$(find result -type f -name '*.apk' | head -n1)" >> $GITHUB_ENV
 
+      - name: Prepare Release Info
+        run: |
+          # 支持手动调用或传入版本
+          LINKURA_VERSION="${{ github.event.inputs.linkura_version }}"
+          LINKURA_LOCALIFY_VERSION="${{ github.event.inputs.linkura_localify_version }}"
+          DATE=$(date '+%Y-%m-%d %H:%M:%S')
+          echo "RELEASE_TITLE=${LINKURA_VERSION}" >> $GITHUB_ENV
+          RELEASE_BODY="Linkura version: ${LINKURA_VERSION}\nLinkura-localify version: ${LINKURA_LOCALIFY_VERSION}\nBuild date: ${DATE}"
+          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
+          echo -e "$RELEASE_BODY" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: Upload Release
         uses: ncipollo/release-action@v1
         with:
           tag: patch-${{ github.run_number }}
-          name: Patch Result ${{ github.run_number }}
-          files: result/*
+          name: ${{ env.RELEASE_TITLE }}
+          body: ${{ env.RELEASE_BODY }}
+          artifacts: ${{ env.RESULT_APK }}
           token: ${{ secrets.GITHUB_TOKEN }}
