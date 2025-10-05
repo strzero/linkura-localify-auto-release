@@ -35,7 +35,6 @@ jobs:
 
       - name: Determine versions
         run: |
-          # 优先从 repository_dispatch 事件获取
           LINKURA_VERSION="${{ github.event.client_payload.linkura_version || github.event.inputs.linkura_version }}"
           LINKURA_LOCALIFY_VERSION="${{ github.event.client_payload.linkura_localify_version || github.event.inputs.linkura_localify_version }}"
           DATE=$(date '+%Y-%m-%d %H:%M:%S')
@@ -54,18 +53,18 @@ jobs:
           echo "${{ secrets.SERVER_SSH_KEY }}" > /tmp/id_rsa
           chmod 600 /tmp/id_rsa
 
-      # - name: Remote wget XAPK to server
-      #   run: |
-      #     ssh -o StrictHostKeyChecking=no -i /tmp/id_rsa -p ${{ secrets.SERVER_PORT }} \
-      #       ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
-      #       set -eux
-      #       mkdir -p /opt/linkura-localify-auto-release-web/data
-      #       cd /opt/linkura-localify-auto-release-web/data
-      #       wget -O latest.apk \
-      #         --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-      #         "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
-      #       ls -lh latest.apk
-      #     EOF
+      - name: Remote wget XAPK to server
+        run: |
+          ssh -o StrictHostKeyChecking=no -i /tmp/id_rsa -p ${{ secrets.SERVER_PORT }} \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
+            set -eux
+            mkdir -p /opt/linkura-localify-auto-release-web/data
+            cd /opt/linkura-localify-auto-release-web/data
+            wget -O latest.apk \
+              --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+              "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
+            ls -lh latest.apk
+          EOF
 
       - name: Copy XAPK from server
         run: |
@@ -102,28 +101,17 @@ jobs:
             echo "❌ 未找到 lspatched apk"
             exit 1
           fi
-          echo "MERGED_APK=$MERGED_APK" >> $GITHUB_ENV
           echo "LSPATCHED_APK=$LSPATCHED_APK" >> $GITHUB_ENV
 
-      - name: Extract Original APK
+      - name: Rename files for release
         run: |
-          ORIGINAL_APK=$(find app -maxdepth 1 -type f -name "*.apk" | head -n1)
-          if [ -z "$ORIGINAL_APK" ]; then
-            echo "❌ 未找到原始 apk"
-            exit 1
-          fi
-          echo "Found original apk: $ORIGINAL_APK"
-          echo "ORIGINAL_APK=$ORIGINAL_APK" >> $GITHUB_ENV
-
-      - name: Rename APKs for Release
-        run: |
-          ORIGINAL_NAME="linkura_${LINKURA_VERSION}.apk"
-          LSPATCHED_NAME="linkura_merged_lspatched_${LINKURA_VERSION}.apk"
-          cp "$ORIGINAL_APK" "./$ORIGINAL_NAME"
-          cp "$LSPATCHED_APK" "./$LSPATCHED_NAME"
-          echo "RELEASE_ORIGINAL=./$ORIGINAL_NAME" >> $GITHUB_ENV
-          echo "RELEASE_LSPATCHED=./$LSPATCHED_NAME" >> $GITHUB_ENV
-          ls -lh ./*.apk
+          INITIAL_XAPK="linkura_${LINKURA_VERSION}.xapk"
+          LSPATCHED_APK_NAME="linkura_merged_lspatched_${LINKURA_VERSION}.apk"
+          cp app.xapk "./$INITIAL_XAPK"
+          cp "$LSPATCHED_APK" "./$LSPATCHED_APK_NAME"
+          echo "RELEASE_XAPK=./$INITIAL_XAPK" >> $GITHUB_ENV
+          echo "RELEASE_LSPATCHED=./$LSPATCHED_APK_NAME" >> $GITHUB_ENV
+          ls -lh ./*.apk ./*.xapk
 
       - name: Upload Release
         uses: ncipollo/release-action@v1
@@ -131,5 +119,5 @@ jobs:
           tag: ${{ env.RELEASE_TITLE }}
           name: ${{ env.RELEASE_TITLE }}
           body: ${{ env.RELEASE_BODY }}
-          artifacts: ${{ env.RELEASE_ORIGINAL }},${{ env.RELEASE_LSPATCHED }}
+          artifacts: ${{ env.RELEASE_XAPK }},${{ env.RELEASE_LSPATCHED }}
           token: ${{ secrets.GITHUB_TOKEN }}
