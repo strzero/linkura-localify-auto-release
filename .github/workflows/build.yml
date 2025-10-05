@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       linkura_version:
-        description: 'Linkura version (optional)'
+        description: 'Linkura version (API trigger)'
         required: false
         default: '手动'
       linkura_localify_version:
-        description: 'Linkura-localify version (optional)'
+        description: 'Linkura-localify version (API trigger)'
         required: false
-        default: ''
+        default: '手动'
 
 jobs:
   build:
@@ -47,7 +47,6 @@ jobs:
             wget -O latest.apk \
               --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
               "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
-            ls -lh latest.apk
           EOF
 
       - name: Copy XAPK from server
@@ -55,7 +54,6 @@ jobs:
           scp -o StrictHostKeyChecking=no -i /tmp/id_rsa -P ${{ secrets.SERVER_PORT }} \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/linkura-localify-auto-release-web/data/latest.apk \
             ./app.xapk
-          ls -lh app.xapk
 
       - name: Download linkura-localify apk
         run: |
@@ -63,7 +61,6 @@ jobs:
             | jq -r '.assets[] | select(.name | test("linkura-localify-.*-debug-arm64-v8a\\.apk")) | .browser_download_url' \
             | head -n1)
           wget -O linkura-localify.apk "$url"
-          ls -lh linkura-localify.apk
 
       - name: Expand XAPK
         run: unzip -o app.xapk -d app
@@ -73,33 +70,24 @@ jobs:
 
       - name: Run LSPatch
         run: |
-          apk=$(find . -maxdepth 1 -name "*_merged.apk" | head -n1)
-          if [ -z "$apk" ]; then
+          merged_apk=$(find . -maxdepth 1 -name "*_merged.apk" | head -n1)
+          if [ -z "$merged_apk" ]; then
             echo "❌ 未找到 _merged.apk，检查 APKEditor 输出"
             exit 1
           fi
-          echo "Found merged apk: $apk"
-          java -jar lspatch.jar "$apk" -m linkura-localify.apk -o result
+          java -jar lspatch.jar "$merged_apk" -m linkura-localify.apk -o result
           ls -lh result
-          echo "RESULT_APK=$(find result -type f -name '*.apk' | head -n1)" >> $GITHUB_ENV
 
-      - name: Prepare Release Info
-        run: |
-          # 支持手动调用或传入版本
-          LINKURA_VERSION="${{ github.event.inputs.linkura_version }}"
-          LINKURA_LOCALIFY_VERSION="${{ github.event.inputs.linkura_localify_version }}"
-          DATE=$(date '+%Y-%m-%d %H:%M:%S')
-          echo "RELEASE_TITLE=${LINKURA_VERSION}" >> $GITHUB_ENV
-          RELEASE_BODY="Linkura version: ${LINKURA_VERSION}\nLinkura-localify version: ${LINKURA_LOCALIFY_VERSION}\nBuild date: ${DATE}"
-          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
-          echo -e "$RELEASE_BODY" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
-      - name: Upload Release
+      - name: Upload Release (both merged & patched)
         uses: ncipollo/release-action@v1
         with:
-          tag: patch-${{ github.run_number }}
-          name: ${{ env.RELEASE_TITLE }}
-          body: ${{ env.RELEASE_BODY }}
-          artifacts: ${{ env.RESULT_APK }}
+          tag: ${{ github.event.inputs.linkura_version }}
+          name: Linkura Patch Release ${{ github.event.inputs.linkura_version }}
+          body: |
+            Linkura version: ${{ github.event.inputs.linkura_version }}
+            Linkura-localify version: ${{ github.event.inputs.linkura_localify_version }}
+            Release time: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
           token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: |
+            $(find . -maxdepth 1 -name "*_merged.apk")
+            $(find result -maxdepth 1 -name "*.apk")
