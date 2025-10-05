@@ -105,13 +105,23 @@ jobs:
           echo "MERGED_APK=$MERGED_APK" >> $GITHUB_ENV
           echo "LSPATCHED_APK=$LSPATCHED_APK" >> $GITHUB_ENV
 
+      - name: Extract Original APK
+        run: |
+          ORIGINAL_APK=$(find app -maxdepth 1 -type f -name "*.apk" | head -n1)
+          if [ -z "$ORIGINAL_APK" ]; then
+            echo "❌ 未找到原始 apk"
+            exit 1
+          fi
+          echo "Found original apk: $ORIGINAL_APK"
+          echo "ORIGINAL_APK=$ORIGINAL_APK" >> $GITHUB_ENV
+
       - name: Rename APKs for Release
         run: |
-          MERGED_NAME="linkura_merged_${LINKURA_VERSION}.apk"
+          ORIGINAL_NAME="linkura_${LINKURA_VERSION}.apk"
           LSPATCHED_NAME="linkura_merged_lspatched_${LINKURA_VERSION}.apk"
-          cp "$MERGED_APK" "./$MERGED_NAME"
+          cp "$ORIGINAL_APK" "./$ORIGINAL_NAME"
           cp "$LSPATCHED_APK" "./$LSPATCHED_NAME"
-          echo "RELEASE_MERGED=./$MERGED_NAME" >> $GITHUB_ENV
+          echo "RELEASE_ORIGINAL=./$ORIGINAL_NAME" >> $GITHUB_ENV
           echo "RELEASE_LSPATCHED=./$LSPATCHED_NAME" >> $GITHUB_ENV
           ls -lh ./*.apk
 
@@ -121,5 +131,5 @@ jobs:
           tag: ${{ env.RELEASE_TITLE }}
           name: ${{ env.RELEASE_TITLE }}
           body: ${{ env.RELEASE_BODY }}
-          artifacts: ${{ env.RELEASE_MERGED }},${{ env.RELEASE_LSPATCHED }}
+          artifacts: ${{ env.RELEASE_ORIGINAL }},${{ env.RELEASE_LSPATCHED }}
           token: ${{ secrets.GITHUB_TOKEN }}
