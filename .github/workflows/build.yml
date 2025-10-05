@@ -11,6 +11,7 @@ on:
         description: 'Linkura-localify version (optional)'
         required: false
         default: ''
+  repository_dispatch:
 
 jobs:
   build:
@@ -32,23 +33,39 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y openssh-client jq unzip wget
 
+      - name: Determine versions
+        run: |
+          # 优先从 repository_dispatch 事件获取
+          LINKURA_VERSION="${{ github.event.client_payload.linkura_version || github.event.inputs.linkura_version }}"
+          LINKURA_LOCALIFY_VERSION="${{ github.event.client_payload.linkura_localify_version || github.event.inputs.linkura_localify_version }}"
+          DATE=$(date '+%Y-%m-%d %H:%M:%S')
+          RELEASE_BODY="Linkura version: ${LINKURA_VERSION}\nLinkura-localify version: ${LINKURA_LOCALIFY_VERSION}\nBuild date: ${DATE}"
+          echo "LINKURA_VERSION=$LINKURA_VERSION" >> $GITHUB_ENV
+          echo "LINKURA_LOCALIFY_VERSION=$LINKURA_LOCALIFY_VERSION" >> $GITHUB_ENV
+          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
+          echo -e "$RELEASE_BODY" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          echo "RELEASE_TITLE=$LINKURA_VERSION" >> $GITHUB_ENV
+          echo "Using Linkura version: $LINKURA_VERSION"
+          echo "Using Linkura-localify version: $LINKURA_LOCALIFY_VERSION"
+
       - name: Write SSH Key
         run: |
           echo "${{ secrets.SERVER_SSH_KEY }}" > /tmp/id_rsa
           chmod 600 /tmp/id_rsa
 
-      # - name: Remote wget XAPK to server
-      #   run: |
-      #     ssh -o StrictHostKeyChecking=no -i /tmp/id_rsa -p ${{ secrets.SERVER_PORT }} \
-      #       ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
-      #       set -eux
-      #       mkdir -p /opt/linkura-localify-auto-release-web/data
-      #       cd /opt/linkura-localify-auto-release-web/data
-      #       wget -O latest.apk \
-      #         --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-      #         "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
-      #       ls -lh latest.apk
-      #     EOF
+      - name: Remote wget XAPK to server
+        run: |
+          ssh -o StrictHostKeyChecking=no -i /tmp/id_rsa -p ${{ secrets.SERVER_PORT }} \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} <<'EOF'
+            set -eux
+            mkdir -p /opt/linkura-localify-auto-release-web/data
+            cd /opt/linkura-localify-auto-release-web/data
+            wget -O latest.apk \
+              --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+              "https://d.apkpure.com/b/XAPK/com.oddno.lovelive?version=latest"
+            ls -lh latest.apk
+          EOF
 
       - name: Copy XAPK from server
         run: |
@@ -88,21 +105,10 @@ jobs:
           echo "MERGED_APK=$MERGED_APK" >> $GITHUB_ENV
           echo "LSPATCHED_APK=$LSPATCHED_APK" >> $GITHUB_ENV
 
-      - name: Prepare Release Info
-        run: |
-          LINKURA_VERSION="${{ github.event.inputs.linkura_version }}"
-          LINKURA_LOCALIFY_VERSION="${{ github.event.inputs.linkura_localify_version }}"
-          DATE=$(date '+%Y-%m-%d %H:%M:%S')
-          RELEASE_BODY="Linkura version: ${LINKURA_VERSION}\nLinkura-localify version: ${LINKURA_LOCALIFY_VERSION}\nBuild date: ${DATE}"
-          echo "RELEASE_TITLE=${LINKURA_VERSION}" >> $GITHUB_ENV
-          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
-          echo -e "$RELEASE_BODY" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
       - name: Rename APKs for Release
         run: |
-          MERGED_NAME="linkura_merged_${{ github.event.inputs.linkura_version }}.apk"
-          LSPATCHED_NAME="linkura_merged_lspatched_${{ github.event.inputs.linkura_version }}.apk"
+          MERGED_NAME="linkura_merged_${LINKURA_VERSION}.apk"
+          LSPATCHED_NAME="linkura_merged_lspatched_${LINKURA_VERSION}.apk"
           cp "$MERGED_APK" "./$MERGED_NAME"
           cp "$LSPATCHED_APK" "./$LSPATCHED_NAME"
           echo "RELEASE_MERGED=./$MERGED_NAME" >> $GITHUB_ENV
