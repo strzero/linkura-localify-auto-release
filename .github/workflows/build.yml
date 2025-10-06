@@ -72,7 +72,7 @@ jobs:
         run: unzip -o app.xapk -d app
 
       - name: Run APKEditor
-        run: java -jar APKEditor.jar m -i app/
+        run: java -jar .github/lib/APKEditor.jar m -i app/
 
       - name: Run LSPatch
         run: |
@@ -82,7 +82,7 @@ jobs:
             exit 1
           fi
           echo "Found merged apk: $MERGED_APK"
-          java -jar lspatch.jar "$MERGED_APK" -m linkura-localify.apk -o result
+          java -jar .github/lib/lspatch.jar "$MERGED_APK" -m linkura-localify.apk -o result
           LSPATCHED_APK=$(find result -type f -name '*.apk' | head -n1)
           if [ -z "$LSPATCHED_APK" ]; then
             echo "❌ 未找到 lspatched apk"
