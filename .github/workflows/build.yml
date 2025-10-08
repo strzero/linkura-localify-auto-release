@@ -100,19 +100,7 @@ jobs:
           echo "RELEASE_LSPATCHED=./$LSPATCHED_APK_NAME" >> $GITHUB_ENV
           ls -lh ./*.apk ./*.xapk
 
-      - name: Check if tag exists
-        id: check_tag
-        run: |
-          if git ls-remote --tags origin | grep -q "refs/tags/${{ env.RELEASE_TITLE }}$"; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "Tag ${{ env.RELEASE_TITLE }} already exists, skipping release"
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "Tag ${{ env.RELEASE_TITLE }} does not exist, proceeding with release"
-          fi
-
       - name: Upload Release
-        if: steps.check_tag.outputs.exists == 'false'
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ env.RELEASE_TITLE }}
@@ -120,9 +108,4 @@ jobs:
           body: ${{ env.RELEASE_BODY }}
           artifacts: ${{ env.RELEASE_XAPK }},${{ env.RELEASE_LSPATCHED }}
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Skip Release (tag exists)
-        if: steps.check_tag.outputs.exists == 'true'
-        run: |
-          echo "✅ Release skipped because tag ${{ env.RELEASE_TITLE }} already exists"
-          echo "This is expected behavior to avoid duplicate releases"
+          overwrite: true
