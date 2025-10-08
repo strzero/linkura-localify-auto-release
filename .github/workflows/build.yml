@@ -100,6 +100,18 @@ jobs:
           echo "RELEASE_LSPATCHED=./$LSPATCHED_APK_NAME" >> $GITHUB_ENV
           ls -lh ./*.apk ./*.xapk
 
+      - name: Delete existing tag and release
+        run: |
+          # 检查标签是否存在
+          if git ls-remote --tags origin | grep -q "refs/tags/${{ env.RELEASE_TITLE }}$"; then
+            echo "标签 ${{ env.RELEASE_TITLE }} 已存在，正在删除..."
+            # 删除远程标签
+            git push origin :refs/tags/${{ env.RELEASE_TITLE }}
+            echo "已删除远程标签 ${{ env.RELEASE_TITLE }}"
+          else
+            echo "标签 ${{ env.RELEASE_TITLE }} 不存在，继续创建新发布"
+          fi
+
       - name: Upload Release
         uses: ncipollo/release-action@v1
         with:
@@ -108,4 +120,3 @@ jobs:
           body: ${{ env.RELEASE_BODY }}
           artifacts: ${{ env.RELEASE_XAPK }},${{ env.RELEASE_LSPATCHED }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          overwrite: true
